@@ -1,0 +1,46 @@
+{
+  "name": "slow_trend_50_200",
+  "what": "50/200 SMA cross, 4h, six majors, OANDA costs",
+  "why": "config: USDCAD/USDCHF quote_ccy CAD/CHF (were treated as USD-quoted); same 391 trades, USDCAD -13.06 -> -13.82 USD, USDCHF +12.19 -> +12.69 USD",
+  "captured_at": "2026-10-06T09:32:40+00:00",
+  "git_commit": "295143e",
+  "trades": 391,
+  "data": {
+    "USDJPY/4h": {
+      "first": "2015-01-01 22:00:00+00:00",
+      "last": "2026-08-28 18:00:00+00:00",
+      "bars": 18148,
+      "close_sha": "02c7a8186bf5fa65"
+    },
+    "AUDUSD/4h": {
+      "first": "2015-01-01 22:00:00+00:00",
+      "last": "2026-08-28 18:00:00+00:00",
+      "bars": 18145,
+      "close_sha": "22369ea4c32f9e88"
+    },
+    "EURUSD/4h": {
+      "first": "2021-01-03 22:00:00+00:00",
+      "last": "2026-08-28 18:00:00+00:00",
+      "bars": 8814,
+      "close_sha": "674b1cea04b79ae1"
+    },
+    "GBPUSD/4h": {
+      "first": "2021-01-03 22:00:00+00:00",
+      "last": "2026-08-28 18:00:00+00:00",
+      "bars": 8814,
+      "close_sha": "0645a6d842c970a4"
+    },
+    "USDCAD/4h": {
+      "first": "2021-01-03 22:00:00+00:00",
+      "last": "2026-08-28 18:00:00+00:00",
+      "bars": 8811,
+      "close_sha": "644216dfd30e0465"
+    },
+    "USDCHF/4h": {
+      "first": "2021-01-03 22:00:00+00:00",
+      "last": "2026-08-28 18:00:00+00:00",
+      "bars": 8812,
+      "close_sha": "6409712f574a22e9"
+    }
+  }
+}

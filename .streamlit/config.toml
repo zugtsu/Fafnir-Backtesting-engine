@@ -1,0 +1,13 @@
+[server]
+address = "localhost"
+headless = true
+
+[theme]
+base = "dark"
+primaryColor = "#7F77DD"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"

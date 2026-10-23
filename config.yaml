@@ -1,0 +1,571 @@
+# ---------------------------------------------------------------------------
+# Saty backtest engine - single source of truth.
+# Every knob the engine reads lives here. Nothing is hard-coded in the code.
+# Results files record the sha256 of this file's canonical JSON form.
+# ---------------------------------------------------------------------------
+
+seed: 42
+
+paths:
+  raw_cache: cache            # the existing CSV caches - never modified
+  store: data_store           # parquet: data_store/<ASSET>/<tf>.parquet + meta.json
+  results: results
+
+# Chart timeframes the engine runs. Bars are stamped at bar OPEN, UTC.
+timeframes: ["3m", "10m", "15m", "30m", "1h", "4h", "1d"]
+
+# Saty "mode" per chart timeframe -> which level period the ATR grid uses.
+#   day = daily ATR/PDC, multiday = weekly, swing = monthly,
+#   position = quarterly, longterm = yearly
+mode_by_timeframe:
+  3m: day
+  10m: day
+  15m: day
+  30m: day
+  1h: day
+  4h: multiday
+  1d: swing
+
+period_by_mode:
+  day: 1d
+  multiday: 1w
+  swing: 1M
+  position: 3M
+  longterm: 1Y
+
+# ---------------------------------------------------------------------------
+# Session / anchor presets referenced by assets below.
+#   rth_us  : NYSE regular hours 09:30-16:00 America/New_York, holiday and
+#             early-close aware (pandas_market_calendars). Daily bar = one
+#             RTH session; "previous period close" = exchange close.
+#   fx      : 24/5. Day starts at the anchor; weekend = anchor Friday ->
+#             anchor Sunday is dropped.
+#   crypto  : 24/7, day starts at the anchor.
+# Anchor kinds: {kind: exchange} or {kind: fixed, hour: H, minute: M, tz: TZ}
+# ---------------------------------------------------------------------------
+sessions:
+  rth_us:
+    kind: rth_us
+    tz: America/New_York
+    calendar: NYSE
+    anchor: {kind: exchange}
+  fx_22utc:                   # HistData convention: 17:00 EST fixed = 22:00 UTC all year
+    kind: fx
+    anchor: {kind: fixed, hour: 22, minute: 0, tz: UTC}
+  fx_17ny:                    # true 17:00 New York, DST-aware (21:00/22:00 UTC)
+    kind: fx
+    anchor: {kind: fixed, hour: 17, minute: 0, tz: America/New_York}
+  crypto_utc:
+    kind: crypto
+    anchor: {kind: fixed, hour: 0, minute: 0, tz: UTC}
+
+# Defaults every asset inherits; an asset block overrides any key.
+asset_defaults:
+  timeframes: ["3m", "10m", "15m", "30m", "1h", "4h", "1d"]
+  allow_gap_entries: false
+  volume:
+    mode: native              # native | proxy | disabled
+    kind: real                # real | tick | none  (what the native column means)
+  volume_gate: hard           # hard | advisory | off
+  volume_unavailable: pass    # hard gate on a bar with no volume reading: pass (stack winner only) | block
+  costs:
+    spread: 0.0               # absolute price units, applied half per side
+    slippage: 0.0             # absolute price units per fill
+    slippage_bps: 0.0         # OR basis points of price per fill (max of the two is used)
+    commission_bps: 0.0       # basis points of notional per side
+  risk:
+    sizing: fixed_fractional  # fixed_fractional | fixed_margin
+    risk_pct: 1.0
+    margin_usd: 200
+    leverage: 5
+
+assets:
+  SPX:
+    class: index
+    session: rth_us
+    source: {kind: histdata_cache, symbol: SPXUSD, note: "CFD bid 1m, filtered to RTH"}
+    # Build the daily/weekly/monthly level grid from the CASH index (^GSPC,
+    # stored as aux asset GSPC) instead of the CFD: the CFD's 16:00 close
+    # misses the cash close by a median 3 pts, p95 25 pts, max 129 pts
+    # (measured 2021-2026), which is up to half a daily ATR of anchor error.
+    # Set enabled: false to anchor on the CFD's own RTH close instead.
+    levels_source: {asset: GSPC, enabled: true}
+    volume:
+      mode: proxy             # (a) SPY proxy [default], (b) ES=F proxy, (c) disabled
+      proxy_symbol: SPY
+      proxy_source: yfinance
+      kind: real
+    volume_gate: hard
+    costs: {spread: 0.3, slippage: 0.25, commission_bps: 0.2}
+    risk: {sizing: fixed_fractional, risk_pct: 1.0}
+
+  EURUSD:
+    class: fx
+    session: fx_22utc
+    source: {kind: histdata_cache, symbol: EURUSD}
+    volume: {mode: native, kind: none}     # HistData carries no tick volume
+    volume_gate: advisory
+    costs: {spread: 0.00008, slippage: 0.00002, commission_bps: 0.2}
+    risk: {sizing: fixed_margin, margin_usd: 200, leverage: 5}
+  USDJPY:
+    class: fx
+    quote_ccy: JPY            # P&L accrues in JPY, converted at the exit price
+    session: fx_22utc
+    source: {kind: histdata_cache, symbol: USDJPY}
+    volume: {mode: native, kind: none}
+    volume_gate: advisory
+    costs: {spread: 0.009, slippage: 0.002, commission_bps: 0.2}
+    risk: {sizing: fixed_margin, margin_usd: 200, leverage: 5}
+  GBPUSD:
+    class: fx
+    session: fx_22utc
+    source: {kind: histdata_cache, symbol: GBPUSD}
+    volume: {mode: native, kind: none}
+    volume_gate: advisory
+    costs: {spread: 0.00010, slippage: 0.00003, commission_bps: 0.2}
+    risk: {sizing: fixed_margin, margin_usd: 200, leverage: 5}
+  AUDUSD:
+    class: fx
+    session: fx_22utc
+    source: {kind: histdata_cache, symbol: AUDUSD}
+    volume: {mode: native, kind: none}
+    volume_gate: advisory
+    costs: {spread: 0.00010, slippage: 0.00003, commission_bps: 0.2}
+    risk: {sizing: fixed_margin, margin_usd: 200, leverage: 5}
+  USDCAD:
+    class: fx
+    quote_ccy: CAD            # P&L accrues in CAD, converted at the exit price
+    session: fx_22utc
+    source: {kind: histdata_cache, symbol: USDCAD}
+    volume: {mode: native, kind: none}
+    volume_gate: advisory
+    costs: {spread: 0.00022, slippage: 0.00003, commission_bps: 0.0}   # OANDA US advertised 2.2 pips
+    risk: {sizing: fixed_margin, margin_usd: 200, leverage: 5}
+  USDCHF:
+    class: fx
+    quote_ccy: CHF            # P&L accrues in CHF, converted at the exit price
+    session: fx_22utc
+    source: {kind: histdata_cache, symbol: USDCHF}
+    volume: {mode: native, kind: none}
+    volume_gate: advisory
+    costs: {spread: 0.00018, slippage: 0.00003, commission_bps: 0.0}   # 1.8 pips
+    risk: {sizing: fixed_margin, margin_usd: 200, leverage: 5}
+  XAUUSD:
+    class: fx
+    session: fx_22utc
+    source: {kind: histdata_cache, symbol: XAUUSD}
+    volume: {mode: native, kind: none}
+    volume_gate: advisory
+    costs: {spread: 0.35, slippage: 0.05, commission_bps: 0.0}         # gold, ~0.35 USD
+    risk: {sizing: fixed_margin, margin_usd: 200, leverage: 5}
+
+  BTCUSD:
+    class: crypto
+    session: crypto_utc
+    source: {kind: bitstamp_cache, symbol: btcusd, step: 1800}
+    # 30m is the base bar here, so 1m/5m-derived frames are not available.
+    timeframes: ["30m", "1h", "4h", "1d"]
+    volume: {mode: native, kind: real}
+    volume_gate: hard
+    costs: {spread: 0.0, slippage_bps: 2.0, commission_bps: 10.0}
+    risk: {sizing: fixed_fractional, risk_pct: 1.0}
+
+  META:
+    class: equity
+    session: rth_us
+    source: {kind: yfinance, symbol: META}
+    volume: {mode: native, kind: real}
+    volume_gate: hard
+    costs: {spread: 0.02, slippage_bps: 1.0, commission_bps: 0.5}
+    risk: {sizing: fixed_fractional, risk_pct: 1.0}
+  AAPL:
+    class: equity
+    session: rth_us
+    source: {kind: yfinance, symbol: AAPL}
+    volume: {mode: native, kind: real}
+    volume_gate: hard
+    costs: {spread: 0.01, slippage_bps: 1.0, commission_bps: 0.5}
+    risk: {sizing: fixed_fractional, risk_pct: 1.0}
+  TSLA:
+    class: equity
+    session: rth_us
+    source: {kind: yfinance, symbol: TSLA}
+    volume: {mode: native, kind: real}
+    volume_gate: hard
+    costs: {spread: 0.02, slippage_bps: 1.5, commission_bps: 0.5}
+    risk: {sizing: fixed_fractional, risk_pct: 1.0}
+
+# Extra series fetched only to serve as proxies / level sources.
+auxiliary:
+  SPY:   {source: {kind: yfinance, symbol: SPY},    session: rth_us}
+  ES:    {source: {kind: yfinance, symbol: "ES=F"}, session: rth_us}
+  GSPC:  {source: {kind: yfinance, symbol: "^GSPC"}, session: rth_us}
+
+# yfinance hard caps (measured): 30m -> 60 days, 1h -> 730 days, 1d -> full.
+fetch:
+  yfinance:
+    daily_start: "2015-01-01"
+    intraday_intervals: ["30m", "1h"]
+  ccxt:
+    exchange: coinbase
+    symbol: "BTC/USD"
+    timeframe: "30m"
+    since: "2021-01-01"
+
+# ---------------------------------------------------------------------------
+# Indicators (Phase 2). Saty published defaults.
+# ---------------------------------------------------------------------------
+indicators:
+  atr_levels:
+    atr_length: 14
+    smoothing: wilder
+    fractions: [0.236, 0.382, 0.5, 0.618, 0.786, 1.0, 1.236, 1.618, 2.0, 2.618]
+    trigger: 0.236
+    gate: 0.382
+    mid: 0.5
+    target: 0.618
+    full: 1.0
+  pivot_ribbon:
+    emas: [8, 13, 21, 48, 200]      # thinkorswim set; TradingView uses 8/21/34 + 13/48
+    fast: 8
+    pivot: 21
+    slow: 48
+    conviction_fast: 13
+    conviction_slow: 48
+    bias_long: 200
+    flat_spread_atr: 0.15
+    time_warp_by_timeframe: {3m: 10m, 10m: 30m, 15m: 1h, 30m: 4h, 1h: 4h, 4h: 1d, 1d: 1w}
+  phase_oscillator:
+    pivot_ema: 21
+    atr_length: 14
+    atr_mult: 3.0
+    smooth: 3
+    bb_length: 21
+    bb_std: 2.0
+    keltner_mult: 2.0
+    compression_mode: pine      # pine = Saty's TradingView source (side-aware, 1.854 hysteresis) | symmetric = the brief's pseudo-code
+    expansion_mult: 1.854
+    round_2dp: false            # the Pine version does not round; the thinkScript one rounds to 2 dp
+    zones: {extreme: 100.0, distribution: 61.8, neutral: 23.6}
+  volume_stack:
+    rel_vol_length: 20
+    conviction_mult: 1.5
+  adx:                          # Wilder / TradingView built-in
+    di_length: 14
+    adx_length: 14
+  fisher:                       # Ehlers Fisher Transform, HPotter Pine
+    length: 10
+
+# ---------------------------------------------------------------------------
+# Strategies / gates (Phase 3-4). Placeholders so the schema is complete.
+# ---------------------------------------------------------------------------
+strategies:
+  swing_bars: 2                 # fractal width for swing-low/high stops
+  golden_gate:
+    entry: gate                 # gate (38.2 close) | trigger (23.6 close, scale at 38.2)
+    entry_fill: market          # market (next open + slippage) | limit (rest at the level, no slippage)
+    limit_valid_bars: 3
+    target: 0.618
+    runner: 1.0
+    scale_out_pct: 50
+    stop: trigger               # trigger | swing | pdc
+    flat_at_period_end: true    # Day mode: no positions held across the session close
+    reject_flat_ribbon: true    # ribbon gate also rejects an entangled ribbon
+    gates:
+      ribbon: true
+      time_warp: true
+      time_of_day: true
+      volume: true
+      oscillator: true
+      range_util: true
+    time_of_day:
+      rth_first_hours: 2
+      fx_window_utc: ["12:00", "16:00"]     # London/NY overlap
+      crypto_window_utc: null
+    oscillator: {reject_long_above: 61.8, reject_short_below: -61.8, require_rising: false}
+    range_util_max: 0.8
+    rel_vol_min: 1.5
+
+  level_retest:                 # Strategy F - built from the findings, Saty ATR levels kept as the core
+    entry: gate                 # signal: bar closes beyond the 38.2 level
+    entry_fill: limit           # then rest a limit AT the level; no chasing the open
+    limit_valid_bars: 3
+    gate_frac: 0.382
+    trigger_frac: 0.236
+    target_frac: 0.786          # half off here, stop to breakeven
+    runner_frac: 1.0            # rest exits at 100% ATR or the session close
+    scale_out_pct: 50
+    stop: pdc                   # previous day close, intrabar
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: true, volume: false, oscillator: false, range_util: true}
+    time_of_day: {rth_first_hours: 3, fx_window_utc: ["07:00", "16:00"], crypto_window_utc: null}
+    range_util_max: 0.8
+
+  gate_static_r:                # Strategy H - 38.2 close, market fill, stop at PDC, static 1.5R target, flat at close
+    entry: gate
+    entry_fill: market
+    gate_frac: 0.382
+    trigger_frac: 0.236
+    target_r: 1.5               # take profit = 1.5 x the initial stop distance (entry - PDC)
+    scale_out_pct: 0
+    target_frac: 0.618          # unused when target_r > 0; kept so the signal frame is complete
+    runner_frac: 1.0
+    stop: pdc
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: true, volume: false, oscillator: false, range_util: true}
+    time_of_day: {rth_first_hours: 3, fx_window_utc: ["07:00", "16:00"], crypto_window_utc: null}
+    range_util_max: 0.8
+
+  spx_gate_fisher:              # Strategy H2 - the optimised SPX trade: 38.2 signal at 0.45, Fisher veto, all day, PDC stop, 2R
+    entry: gate
+    entry_fill: market
+    gate_frac: 0.45             # sweep: 0.42-0.45 beat 0.382 on every target; 0.45 chosen mid-plateau
+    trigger_frac: 0.236
+    target_r: 2.0               # r2, r3 and no target within $15 of each other; most trades exit at the close
+    scale_out_pct: 0
+    target_frac: 9.0
+    runner_frac: 9.0
+    stop: pdc
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: false, oscillator: false, range_util: true, adx: false, fisher: true}
+    fisher: {mode: not_extended, max_abs: 1.0}   # skip the signal when |Fisher| >= 1.0 (a peak swing)
+    time_of_day: {rth_first_hours: 6.5, fx_window_utc: null, crypto_window_utc: null}
+    range_util_max: 0.8
+
+  spx_h2_final:                 # H2 as recommended 2026-09-14: H2 plus no signals from bars opening 14:30 ET or later (Tesrak's completion map)
+    entry: gate
+    entry_fill: market
+    gate_frac: 0.45
+    trigger_frac: 0.236
+    target_r: 2.0
+    scale_out_pct: 0
+    target_frac: 9.0
+    runner_frac: 9.0
+    stop: pdc
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: true, volume: false, oscillator: false, range_util: true, adx: false, fisher: true}
+    fisher: {mode: not_extended, max_abs: 1.0}
+    time_of_day: {rth_first_hours: 5, fx_window_utc: null, crypto_window_utc: null}   # bars opening 09:30 to 13:30 ET
+    range_util_max: 0.8
+
+  usdjpy_pips_opt:              # Strategy P2 - the optimised USDJPY trade: limit at the 38.2 for 5 bars, 15 pips, PDC stop, all day
+    entry: gate
+    entry_fill: limit
+    limit_valid_bars: 5
+    gate_frac: 0.382
+    trigger_frac: 0.236
+    target_abs: 0.15            # 15 pips; 10 pips has the best profit factor, 15 the most money
+    scale_out_pct: 0
+    target_frac: 9.0
+    runner_frac: 9.0
+    stop: pdc
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: false, oscillator: false, range_util: true, adx: false, fisher: false}
+    time_of_day: {rth_first_hours: 3, fx_window_utc: null, crypto_window_utc: null}
+    range_util_max: 0.8
+
+  fx_pips:                      # Strategy P - USDJPY: 38.2 close, limit at the level, fixed 20-pip target, stop at PDC
+    entry: gate
+    entry_fill: limit
+    limit_valid_bars: 3
+    gate_frac: 0.382
+    trigger_frac: 0.236
+    target_abs: 0.20            # 20 pips on a JPY pair (0.01 per pip); use 0.0020 on EURUSD-style pairs
+    scale_out_pct: 0
+    target_frac: 0.618
+    runner_frac: 1.0
+    stop: pdc                   # swing (last confirmed swing low/high) tested within a few dollars of this
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: true, volume: false, oscillator: false, range_util: true}
+    time_of_day: {rth_first_hours: 3, fx_window_utc: ["07:00", "16:00"], crypto_window_utc: null}
+    range_util_max: 0.8
+
+  saty_system:                  # Strategy G - ATR Levels + Pivot Ribbon (8/21/34, 13/48) + Volume Stack, as Saty describes them
+    entry: trigger              # long/short trigger cloud at the 23.6 fib
+    scale_at_gate: false        # targets are Saty's ladder, not the 38.2 gate
+    entry_fill: market
+    limit_valid_bars: 3
+    trigger_frac: 0.236
+    gate_frac: 0.382
+    target_frac: 0.618          # mid-range level: half off
+    runner_frac: 1.0            # full range (+/- 1 ATR); 1.618 = extension level variant
+    scale_out_pct: 50
+    stop: trigger               # Saty's exit: close back through the trigger
+    flat_at_period_end: true
+    reject_flat_ribbon: true    # a folded/entangled ribbon is not a trend
+    require_conviction: true    # 13/48 conviction EMAs must agree with the ribbon
+    gates: {ribbon: true, time_warp: true, time_of_day: false, volume: true, oscillator: false, range_util: false}
+    time_of_day: {rth_first_hours: 3, fx_window_utc: ["07:00", "16:00"], crypto_window_utc: null}
+    range_util_max: 0.8
+    rel_vol_min: 1.0
+
+  ribbon_pullback:              # Strategy B
+    pullback_ema: 13            # 13 | 21
+    trail_ema: 13               # 13 | 21
+    pullback_lookback: 5
+    require_htf: true
+    stop: close_through         # close_through (EMA48) | swing
+    scale_out_pct: 50
+    flat_at_period_end: true
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: true, oscillator: false, range_util: false}
+    rel_vol_min: 1.0
+
+  osc_reversal:                 # Strategy C
+    ribbon_filter: true         # reject against strong conviction; test false too
+    scale_out_pct: 50
+    flat_at_period_end: true
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: true, oscillator: false, range_util: false}
+    rel_vol_min: 1.2
+
+  compression_breakout:         # Strategy D
+    min_compression_bars: 5
+    direction_from: ribbon_or_osc   # ribbon | osc | ribbon_or_osc
+    trigger_frac: 0.236
+    target_frac: 0.618
+    runner_frac: 1.0
+    stop: trigger
+    scale_out_pct: 50
+    flat_at_period_end: true
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: true, oscillator: false, range_util: false}
+    rel_vol_min: 1.0
+
+  level_fade:                   # Strategy L - fade the outer ATR level (range exhaustion) back toward the inner ladder
+    mode: rejection             # rejection | touch | close
+    fade_frac: 1.0              # the level being faded
+    stop_frac: 1.236            # stop beyond it
+    target_frac: 0.618          # target back inside
+    fresh: true
+    entry_fill: market
+    limit_valid_bars: 3
+    scale_out_pct: 0
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: false, oscillator: false, range_util: false, adx: false, fisher: false}
+    time_of_day: {rth_first_hours: 6.5, fx_window_utc: null, crypto_window_utc: null}
+
+  orb:                          # Strategy O - opening range breakout
+    mode: range                 # range | first_candle | open_atr
+    range_start: 0
+    range_bars: 1
+    entry_window: 0
+    stop: range_opp             # range_opp | range_mid | pdc | atr
+    stop_atr_k: 0.5
+    open_atr_k: 0.5
+    bias: none                  # none | pdc | first_candle
+    entry_fill: market
+    target_r: 0
+    scale_out_pct: 0
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: false, oscillator: false, range_util: false, adx: false, fisher: false}
+    time_of_day: {rth_first_hours: 6.5, fx_window_utc: null, crypto_window_utc: null}
+
+  usdjpy_london_orb:            # Strategy O2 - the USDJPY London-open breakout (found 2026-09-14): 55 of 64 30m cells and 32 of 32 1H cells positive
+    mode: range
+    range_start: 18             # 30m bars after the 22:00 UTC day open -> 07:00 UTC (use 9 on 1H)
+    range_bars: 4               # 07:00-09:00 UTC (2 on 1H)
+    entry_window: 10            # take the break up to 14:00 UTC (5 on 1H)
+    stop: range_opp             # other side of the range, intrabar
+    bias: none
+    entry_fill: market
+    target_r: 0                 # no target: hold to the day's end (22:00 UTC)
+    scale_out_pct: 0
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: false, oscillator: false, range_util: false, adx: false, fisher: false}
+    time_of_day: {rth_first_hours: 6.5, fx_window_utc: null, crypto_window_utc: null}
+
+  indicator_lab:                # Strategy I - textbook indicators, one shared exit geometry
+    system: ma_cross
+    n_fast: 12
+    n_slow: 26
+    n_signal: 9
+    n: 14
+    lo: 30.0
+    hi: 70.0
+    k_band: 2.0
+    ma_kind: ema                # ema | sma
+    adx_min: 20.0
+    psar_step: 0.02
+    psar_cap: 0.2
+    stop_atr_k: 2.0
+    exit_on_flip: true          # close when the indicator turns against the trade
+    entry_fill: market
+    target_r: 0
+    scale_out_pct: 0
+    flat_at_period_end: false
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: false, oscillator: false, range_util: false, adx: false, fisher: false, rsi: false, macd: false}
+    time_of_day: {rth_first_hours: 6.5, fx_window_utc: null, crypto_window_utc: null}
+
+  classics:                     # daily-bar textbook systems (run on --tf 1d with --set mode_by_timeframe.1d=day)
+    system: donchian            # donchian | rsi2
+    entry_n: 20
+    exit_n: 10
+    allow_shorts: true
+    trend_sma: 200
+    rsi_n: 2
+    rsi_buy: 10
+    exit_sma: 5
+    stop_atr_k: 2.0
+    entry_fill: market
+    scale_out_pct: 0
+    flat_at_period_end: false
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: false, oscillator: false, range_util: false, adx: false, fisher: false}
+    time_of_day: {rth_first_hours: 6.5, fx_window_utc: null, crypto_window_utc: null}
+
+  vomy:                         # Strategy V - Saty's Vomy: stacked trend breaks the 13, tests the 48, retests the 13 -> reversal
+    mode: retest13              # retest13 (early) | break48 (confirmed)
+    trend_bars: 12
+    lookback: 20
+    stop: ema_close             # ema_close | swing
+    scale_out_pct: 50
+    flat_at_period_end: true
+    reject_flat_ribbon: false
+    gates: {ribbon: false, time_warp: false, time_of_day: false, volume: false, oscillator: false, range_util: false, adx: false, fisher: false}
+    time_of_day: {rth_first_hours: 6.5, fx_window_utc: null, crypto_window_utc: null}
+
+  random_entry:                 # validation baseline, not a strategy
+    entries_per_day: 0.25
+    exit_structure: saty        # saty | spx_opt
+    scale_out_pct: 50
+    flat_at_period_end: true
+    gates: {}
+
+  full_stack:                   # Strategy E - everything on
+    entry: gate
+    target_frac: 0.618
+    runner_frac: 1.0
+    scale_out_pct: 50
+    stop: trigger
+    flat_at_period_end: true
+    reject_flat_ribbon: true
+    require_conviction: true
+    gates: {ribbon: true, time_warp: true, time_of_day: true, volume: true, oscillator: true, range_util: true}
+    time_of_day: {rth_first_hours: 2, fx_window_utc: ["12:00", "16:00"], crypto_window_utc: null}
+    oscillator: {reject_long_above: 61.8, reject_short_below: -61.8, require_rising: true}
+    range_util_max: 0.8
+    rel_vol_min: 1.5
+
+risk:
+  starting_equity: 100000
+  max_concurrent: 3
+  max_trades_per_asset_per_day: 2
+  cooldown_bars_after_stop: 3
+  daily_loss_limit_pct: 3.0
+  consecutive_loss_limit: 4
+  halt_drawdown_pct: 15.0
+  breakeven_after_partial: true
+  min_stop_atr: 0.05          # skip entries whose structural stop is closer than this (in level-ATR)
+
+walk_forward:
+  in_sample_months: 12
+  out_of_sample_months: 3
+  monte_carlo_runs: 1000

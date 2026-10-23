@@ -1,0 +1,16 @@
+{
+  "name": "h3_spx",
+  "what": "spx_h2_final on SPX 1h",
+  "why": "initial baseline; rubber band and storm chaser lifted from chat-only inline scripts into saty_bt/standalone.py and verified to reproduce 330 and 287 trades",
+  "captured_at": "2026-10-06T01:43:14+00:00",
+  "git_commit": "ca60d8e",
+  "trades": 327,
+  "data": {
+    "SPX/1h": {
+      "first": "2021-01-04 14:30:00+00:00",
+      "last": "2026-08-28 19:30:00+00:00",
+      "bars": 9807,
+      "close_sha": "2532ac9cfebe9aa6"
+    }
+  }
+}

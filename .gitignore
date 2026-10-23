@@ -1,0 +1,18 @@
+# Market data and run output rebuild locally; never commit them
+cache/
+data_store/
+results/
+user_data/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Noise
+*.log
+.DS_Store
+Thumbs.db

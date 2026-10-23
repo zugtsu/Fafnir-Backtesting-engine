@@ -1,0 +1,16 @@
+{
+  "name": "storm_chaser",
+  "what": "BTC 1h vol-gated 50-bar breakout, Bitstamp 2013-2026",
+  "why": "initial baseline; rubber band and storm chaser lifted from chat-only inline scripts into saty_bt/standalone.py and verified to reproduce 330 and 287 trades",
+  "captured_at": "2026-10-06T01:43:15+00:00",
+  "git_commit": "ca60d8e",
+  "trades": 287,
+  "data": {
+    "bitstamp_long/1h": {
+      "first": "2013-01-01 00:00:00+00:00",
+      "last": "2026-09-17 22:00:00+00:00",
+      "bars": 120191,
+      "close_sha": "a39d722dfa614ce2"
+    }
+  }
+}
